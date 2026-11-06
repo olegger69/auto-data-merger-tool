@@ -1,14 +1,17 @@
 """
-Панель импорта файлов
+Панель импорта файлов с поддержкой маппинга столбцов
 """
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from tkinter import simpledialog
 import threading
+import os
 from core.merger import DataMerger
+from core.loader import DataLoader
+from core.validator import DataValidator
 from reports.kpi import KPIReporter
 from reports.summaries import SummaryReporter
+from ui.column_mapping_dialog import ColumnMappingDialog
 
 
 class FilePanel:
@@ -18,50 +21,30 @@ class FilePanel:
         self.parent = parent
         self.main_window = main_window
         self.merger = DataMerger()
-        self.selected_files = []  # Список выбранных файлов
+        self.selected_files = []
 
         self.frame = ttk.Frame(parent)
         self._create_widgets()
 
     def _create_widgets(self):
         """Создание виджетов панели импорта"""
-        # Верхняя часть: кнопки управления
         control_frame = ttk.Frame(self.frame)
         control_frame.pack(fill='x', padx=10, pady=10)
 
-        add_btn = ttk.Button(
-            control_frame,
-            text="➕ Добавить файлы",
-            command=self._add_files
-        )
+        add_btn = ttk.Button(control_frame, text="➕ Добавить файлы", command=self._add_files)
         add_btn.pack(side='left', padx=5)
 
-        clear_btn = ttk.Button(
-            control_frame,
-            text="🗑️ Очистить список",
-            command=self._clear_files
-        )
+        clear_btn = ttk.Button(control_frame, text="🗑️ Очистить список", command=self._clear_files)
         clear_btn.pack(side='left', padx=5)
 
-        merge_btn = ttk.Button(
-            control_frame,
-            text="🔗 Объединить файлы",
-            command=self._merge_files
-        )
+        merge_btn = ttk.Button(control_frame, text="🔗 Объединить файлы", command=self._merge_files)
         merge_btn.pack(side='right', padx=5)
 
-        # Средняя часть: список файлов
         list_frame = ttk.LabelFrame(self.frame, text="Выбранные файлы", padding=10)
         list_frame.pack(fill='both', expand=True, padx=10, pady=5)
 
-        # Treeview для списка файлов
         columns = ('filename', 'rows', 'status')
-        self.file_tree = ttk.Treeview(
-            list_frame,
-            columns=columns,
-            show='headings',
-            height=10
-        )
+        self.file_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=10)
 
         self.file_tree.heading('filename', text='Имя файла')
         self.file_tree.heading('rows', text='Строк')
@@ -71,38 +54,24 @@ class FilePanel:
         self.file_tree.column('rows', width=100, minwidth=80, anchor='center')
         self.file_tree.column('status', width=150, minwidth=100)
 
-        # Скроллбар
-        scrollbar = ttk.Scrollbar(
-            list_frame,
-            orient='vertical',
-            command=self.file_tree.yview
-        )
+        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.file_tree.yview)
         self.file_tree.configure(yscrollcommand=scrollbar.set)
 
         self.file_tree.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
 
-        # Кнопка удаления выбранного файла
-        remove_btn = ttk.Button(
-            list_frame,
-            text="Удалить выбранный",
-            command=self._remove_selected
-        )
+        remove_btn = ttk.Button(list_frame, text="Удалить выбранный", command=self._remove_selected)
         remove_btn.pack(pady=5)
 
-        # Нижняя часть: прогресс-бар
         self.progress_var = tk.DoubleVar(value=0)
-        self.progress_bar = ttk.Progressbar(
-            self.frame,
-            variable=self.progress_var,
-            maximum=100,
-            mode='indeterminate'
-        )
+        self.progress_bar = ttk.Progressbar(self.frame, variable=self.progress_var, maximum=100, mode='indeterminate')
         self.progress_bar.pack(fill='x', padx=10, pady=5)
-        self.progress_bar.pack_forget()  # Скрыт по умолчанию
+        self.progress_bar.pack_forget()
 
     def _add_files(self):
         """Открытие диалога выбора файлов"""
+        initial_dir = self.main_window.config.get('last_import_folder', '')
+
         files = filedialog.askopenfilenames(
             title="Выберите файлы для импорта",
             filetypes=[
@@ -110,10 +79,14 @@ class FilePanel:
                 ("CSV файлы", "*.csv"),
                 ("Все поддерживаемые", "*.xlsx *.xls *.csv"),
                 ("Все файлы", "*.*")
-            ]
+            ],
+            initialdir=initial_dir if initial_dir else ''
         )
 
         if files:
+            last_folder = os.path.dirname(files[0])
+            self.main_window.config.set_last_import_folder(last_folder)
+
             for file_path in files:
                 if file_path not in self.selected_files:
                     self.selected_files.append(file_path)
@@ -122,14 +95,12 @@ class FilePanel:
             self.main_window.set_status(f"Добавлено файлов: {len(self.selected_files)}")
 
     def _clear_files(self):
-        """Очистка списка файлов"""
         self.selected_files = []
         for item in self.file_tree.get_children():
             self.file_tree.delete(item)
         self.main_window.set_status("Список файлов очищен")
 
     def _remove_selected(self):
-        """Удаление выбранного файла из списка"""
         selected = self.file_tree.selection()
         if selected:
             item = self.file_tree.item(selected[0])
@@ -139,66 +110,108 @@ class FilePanel:
             self.main_window.set_status(f"Удалён файл: {file_path}")
 
     def _merge_files(self):
-        """Запуск объединения файлов в фоновом потоке"""
+        """Проверка файлов, маппинг и запуск объединения"""
         if not self.selected_files:
             messagebox.showwarning("Внимание", "Сначала добавьте хотя бы один файл!")
             return
 
-        # Показываем прогресс-бар
+        self.main_window.set_status("Анализ структуры файлов...")
+        prepared_dfs = []
+        errors = []
+
+        # Этап 1: Проверка и маппинг (в главном потоке, это быстро)
+        for file_path in self.selected_files:
+            try:
+                # Загружаем и определяем роли
+                df, roles = self.merger.loader.load_and_detect(file_path)
+                is_complete, missing = DataLoader.check_roles_complete(roles)
+
+                if not is_complete:
+                    # Открываем диалог маппинга
+                    dialog = ColumnMappingDialog(
+                        self.main_window.root,
+                        df.columns.tolist(),
+                        roles
+                    )
+                    new_roles = dialog.show()
+
+                    if new_roles is None:
+                        errors.append(f"Файл '{os.path.basename(file_path)}': обработка отменена.")
+                        continue
+
+                    # Проверяем, выбрал ли пользователь все обязательные поля
+                    is_now_complete, still_missing = DataLoader.check_roles_complete(new_roles)
+                    if not is_now_complete:
+                        errors.append(f"Файл '{os.path.basename(file_path)}': не выбраны столбцы {still_missing}.")
+                        continue
+
+                    # Применяем маппинг с выбранными ролями
+                    df = DataLoader.apply_mapping(df, new_roles)
+                else:
+                    # Все роли определены автоматически — всё равно применяем маппинг
+                    # для стандартизации имён столбцов
+                    df = DataLoader.apply_mapping(df, roles)
+
+                prepared_dfs.append(df)
+
+                # Обновляем статус в дереве
+                for item in self.file_tree.get_children():
+                    if self.file_tree.item(item)['values'][0] == file_path:
+                        self.file_tree.item(item, values=(file_path, len(df), '✅ Готов'))
+
+            except Exception as e:
+                errors.append(f"Файл '{os.path.basename(file_path)}': {str(e)}")
+                for item in self.file_tree.get_children():
+                    if self.file_tree.item(item)['values'][0] == file_path:
+                        self.file_tree.item(item, values=(file_path, '—', '❌ Ошибка'))
+
+        if not prepared_dfs:
+            error_text = "\n".join(errors) if errors else "Не удалось подготовить ни один файл."
+            messagebox.showerror("Ошибка", error_text)
+            self.main_window.set_status("❌ Объединение прервано")
+            return
+
+        if errors:
+            error_text = "\n".join(errors)
+            messagebox.showwarning("Предупреждения", f"Некоторые файлы были пропущены:\n\n{error_text}")
+
+        # Этап 2: Фоновая обработка (объединение и расчеты)
         self.progress_bar.pack(fill='x', padx=10, pady=5)
         self.progress_bar.start(10)
 
-        # Запускаем обработку в отдельном потоке
-        thread = threading.Thread(target=self._merge_worker, daemon=True)
+        thread = threading.Thread(target=self._merge_worker_bg, args=(prepared_dfs,), daemon=True)
         thread.start()
 
-    def _merge_worker(self):
-        """Фоновая задача объединения файлов"""
+    def _merge_worker_bg(self, prepared_dfs):
+        """Фоновая задача объединения и расчетов"""
         try:
-            self.main_window.set_status("Обработка файлов...")
+            self.main_window.set_status("Объединение и расчет данных...")
 
-            # Объединение данных
-            merged_df = self.merger.merge_files(self.selected_files)
+            # 1. Объединение
+            merged_df = self.merger.merge_dataframes(prepared_dfs)
 
-            # Расчёт сводок и KPI
-            summaries = SummaryReporter.generate_all(merged_df)
-            kpi = KPIReporter.calculate(merged_df)
+            # 2. Валидация и очистка (приведение типов, расчет revenue)
+            clean_df = DataValidator.process(merged_df)
 
-            # Проверка ошибок
-            errors = self.merger.get_errors()
+            # 3. Расчет сводок и KPI
+            summaries = SummaryReporter.generate_all(clean_df)
+            kpi = KPIReporter.calculate(clean_df)
 
-            # Возвращаемся в главный поток для обновления UI
-            self.frame.after(0, self._on_merge_complete, merged_df, summaries, kpi, errors)
+            # Возвращаемся в главный поток
+            self.frame.after(0, self._on_merge_complete, clean_df, summaries, kpi)
 
         except Exception as e:
             self.frame.after(0, self._on_merge_error, str(e))
 
-    def _on_merge_complete(self, merged_df, summaries, kpi, errors):
-        """Обработка успешного завершения объединения"""
+    def _on_merge_complete(self, merged_df, summaries, kpi):
+        """Обработка успешного завершения"""
         self.progress_bar.stop()
         self.progress_bar.pack_forget()
 
-        # Показываем предупреждения, если есть
-        if errors:
-            error_text = "\n".join(errors)
-            messagebox.showwarning(
-                "Предупреждения при обработке",
-                f"Следующие файлы не удалось обработать:\n\n{error_text}"
-            )
-
-        # Обновляем статус в списке файлов
-        for item in self.file_tree.get_children():
-            self.file_tree.item(item, values=(
-                self.file_tree.item(item)['values'][0],
-                self.file_tree.item(item)['values'][1],
-                '✅ Обработан'
-            ))
-
-        # Передаём данные в главное окно
         self.main_window.on_data_merged(merged_df, summaries, kpi)
 
     def _on_merge_error(self, error_message):
-        """Обработка ошибки при объединении"""
+        """Обработка ошибки"""
         self.progress_bar.stop()
         self.progress_bar.pack_forget()
         messagebox.showerror("Ошибка", f"Не удалось объединить файлы:\n\n{error_message}")

@@ -119,11 +119,14 @@ class ExportPanel:
         if not self._check_data_available():
             return
 
+        initial_dir = self.main_window.config.get('last_export_folder', '')
+
         filepath = filedialog.asksaveasfilename(
             title="Сохранить объединённые данные",
             defaultextension=".xlsx",
             filetypes=[("Excel файлы", "*.xlsx")],
-            initialfile="merged_output.xlsx"
+            initialfile="merged_output.xlsx",
+            initialdir=initial_dir if initial_dir else ''
         )
 
         if filepath:
@@ -133,6 +136,11 @@ class ExportPanel:
                     index=False,
                     engine='openpyxl'
                 )
+
+                # Сохраняем папку последнего экспорта
+                last_folder = os.path.dirname(filepath)
+                self.main_window.config.set_last_export_folder(last_folder)
+
                 messagebox.showinfo(
                     "Успех",
                     f"Объединённые данные сохранены:\n{filepath}"
@@ -146,11 +154,14 @@ class ExportPanel:
         if not self._check_data_available():
             return
 
+        initial_dir = self.main_window.config.get('last_export_folder', '')
+
         filepath = filedialog.asksaveasfilename(
             title="Сохранить сводный отчёт",
             defaultextension=".xlsx",
             filetypes=[("Excel файлы", "*.xlsx")],
-            initialfile="summary_report.xlsx"
+            initialfile="summary_report.xlsx",
+            initialdir=initial_dir if initial_dir else ''
         )
 
         if filepath:
@@ -186,6 +197,10 @@ class ExportPanel:
                         sheet_name='KPI',
                         index=False
                     )
+
+                # Сохраняем папку последнего экспорта
+                last_folder = os.path.dirname(filepath)
+                self.main_window.config.set_last_export_folder(last_folder)
 
                 messagebox.showinfo(
                     "Успех",
@@ -247,11 +262,3 @@ class ExportPanel:
                 self.main_window.set_status(f"✅ Графики экспортированы в {folder}")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось сохранить графики:\n{e}")
-
-    def enable(self):
-        """Активация панели (когда данные загружены)"""
-        pass  # Кнопки всегда активны, проверка внутри методов
-
-    def disable(self):
-        """Деактивация панели"""
-        pass
