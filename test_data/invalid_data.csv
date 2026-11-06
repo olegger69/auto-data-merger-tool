@@ -1,0 +1,6 @@
+date,region,product,units_sold
+not-a-date,South,Monitor,45
+2025-02-17,South,Laptop,50
+2025-02-09,North,Laptop,20
+2025-02-18,West,Phone,5
+2025-03-22,South,Laptop,45
