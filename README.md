@@ -1,9 +1,29 @@
 # Auto Data Merger Tool
 
-Настольное приложение (Python 3.11+, Tkinter) для объединения файлов продаж Excel/CSV
-и построения сводного дашборда с графиками.
+Настольное приложение для объединения файлов продаж Excel/CSV и формирования сводного дашборда с графиками.
 
-## Запуск
-    pip install -r requirements.txt
-    python scripts/generate_sample_data.py   # тестовые файлы в test_data/
-    python main.py
+## Возможности
+
+- ✅ Импорт нескольких файлов (.xlsx, .xls, .csv)
+- ✅ Автоматическая валидация и очистка данных
+- ✅ Объединение файлов с удалением дубликатов
+- ✅ Расчёт выручки (revenue = units_sold × unit_price)
+- ✅ Дашборд с KPI-метриками
+- ✅ Сводные таблицы (по продуктам, регионам, месяцам)
+- ✅ Визуализация: столбчатые и линейные графики
+- ✅ Экспорт результатов в Excel и PNG
+
+## Требования
+
+- Python 3.11+
+- Зависимости: pandas, openpyxl, matplotlib
+
+## Установка и запуск
+
+### 1. Клонировать репозиторий
+
+```bash
+git clone https://github.com/ТВОЙ_ЛОГИН/auto-data-merger-tool.git
+cd auto-data-merger-tool
+## Генерация тестовых данных
+python scripts/generate_sample_data.py

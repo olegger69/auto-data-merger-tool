@@ -29,19 +29,27 @@ env/
 # PyCharm
 .idea/
 *.iml
+*.ipr
+*.iws
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Test data (не коммитим сгенерированные данные)
 test_data/
 
-# Output files
+# Output files (результаты экспорта)
 *.xlsx
 *.png
 merged_output.xlsx
 summary_report.xlsx
+chart_*.png
 
 # Logs
 *.log
+
+# Temporary files
+*.tmp
+*.temp
