@@ -13,8 +13,14 @@ class DataLoader:
 
     SUPPORTED_EXTENSIONS = {'.csv', '.xlsx', '.xls'}
 
-    # Роли, которые должны быть определены для полноценной работы
+    # Только 5 обязательных полей (базовый набор)
     REQUIRED_ROLES = ['date', 'region', 'product', 'units_sold', 'unit_price']
+
+    # Опциональные поля (расширенный набор)
+    OPTIONAL_ROLES = ['cost_price', 'profit', 'customer', 'manager']
+
+    # Все поля вместе
+    ALL_ROLES = REQUIRED_ROLES + OPTIONAL_ROLES
 
     # Файлы экспорта, которые не стоит загружать как исходные данные
     EXPORT_FILE_HINTS = ['merged_output', 'summary_report']
@@ -23,43 +29,26 @@ class DataLoader:
         self.loaded_files = []
 
     def load_file(self, file_path: str, sheet_name: Optional[str] = None) -> pd.DataFrame:
-        """
-        Загрузка одного файла
-
-        Args:
-            file_path: Путь к файлу
-            sheet_name: Имя листа для Excel (по умолчанию первый лист)
-
-        Returns:
-            DataFrame с данными
-
-        Raises:
-            ValueError: Если файл не поддерживается или не найден
-        """
+        """Загрузка одного файла"""
         path = Path(file_path)
 
-        # Проверка существования файла
         if not path.exists():
             raise ValueError(f"Файл не найден: {file_path}")
 
-        # Проверка расширения
         if path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
             raise ValueError(f"Неподдерживаемый формат файла: {path.suffix}")
 
-        # Предупреждение о файлах экспорта
         if path.stem in self.EXPORT_FILE_HINTS:
             raise ValueError(
                 f"Файл '{path.name}' похож на файл экспорта приложения. "
                 f"Пожалуйста, выберите исходные файлы с данными о продажах."
             )
 
-        # Загрузка в зависимости от типа файла
         if path.suffix.lower() == '.csv':
             df = self._load_csv(path)
         else:
             df = self._load_excel(path, sheet_name)
 
-        # Сохранение информации о файле
         self.loaded_files.append({
             'path': str(path),
             'name': path.name,
@@ -69,14 +58,8 @@ class DataLoader:
 
         return df
 
-    def load_and_detect(self, file_path: str, sheet_name: Optional[str] = None) -> Tuple[
-        pd.DataFrame, Dict[str, Optional[str]]]:
-        """
-        Загрузка файла с автоопределением ролей столбцов.
-
-        Returns:
-            Кортеж (DataFrame, словарь ролей)
-        """
+    def load_and_detect(self, file_path: str, sheet_name: Optional[str] = None) -> Tuple[pd.DataFrame, Dict[str, Optional[str]]]:
+        """Загрузка файла с автоопределением ролей столбцов"""
         df = self.load_file(file_path, sheet_name)
         detector = SmartColumnDetector(df)
         roles = detector.detect_all()
@@ -120,28 +103,14 @@ class DataLoader:
 
     @staticmethod
     def apply_mapping(df: pd.DataFrame, roles: Dict[str, Optional[str]]) -> pd.DataFrame:
-        """
-        Применение маппинга: переименовывает столбцы согласно ролям.
-        Удаляет дубликаты и лишние столбцы.
-
-        Args:
-            df: Исходный DataFrame
-            roles: Словарь ролей от SmartColumnDetector
-
-        Returns:
-            DataFrame со стандартными именами столбцов
-        """
+        """Применение маппинга: переименовывает столбцы согласно ролям"""
         df = df.copy()
 
-        # Шаг 1: Собираем все стандартные имена ролей, которые назначены
         assigned_standard_cols = {role for role, col in roles.items() if col is not None}
 
-        # Шаг 2: Удаляем столбцы, которые уже имеют стандартные имена,
-        # но не назначены никакой роли (чтобы избежать дубликатов после переименования)
         cols_to_drop = []
         for col in df.columns:
             if col in assigned_standard_cols:
-                # Проверяем, назначен ли этот столбец какой-либо роли
                 is_assigned = any(
                     roles.get(role) == col
                     for role in roles
@@ -153,7 +122,6 @@ class DataLoader:
         if cols_to_drop:
             df = df.drop(columns=cols_to_drop)
 
-        # Шаг 3: Переименовываем назначенные столбцы в стандартные имена
         rename_map = {}
         for role, col in roles.items():
             if col is not None and col != role:
@@ -162,9 +130,7 @@ class DataLoader:
         if rename_map:
             df = df.rename(columns=rename_map)
 
-        # Шаг 4: Финальная проверка на дубликаты столбцов
         if df.columns.duplicated().any():
-            # Оставляем только первое вхождение каждого столбца
             df = df.loc[:, ~df.columns.duplicated()]
 
         return df
@@ -172,10 +138,8 @@ class DataLoader:
     @staticmethod
     def check_roles_complete(roles: Dict[str, Optional[str]]) -> Tuple[bool, List[str]]:
         """
-        Проверка, все ли обязательные роли определены.
-
-        Returns:
-            Кортеж (полнота, список недостающих ролей)
+        Проверка, все ли ОБЯЗАТЕЛЬНЫЕ роли определены.
+        Опциональные роли не требуются.
         """
         missing = [role for role in DataLoader.REQUIRED_ROLES if roles.get(role) is None]
         return (len(missing) == 0, missing)

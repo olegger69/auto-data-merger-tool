@@ -12,11 +12,9 @@ from typing import Any, Dict
 class ConfigManager:
     """Менеджер настроек приложения"""
 
-    # Имя папки для хранения настроек
     APP_FOLDER = '.auto_data_merger'
     CONFIG_FILENAME = 'config.json'
 
-    # Значения по умолчанию
     DEFAULTS = {
         'version': '1.0',
         'last_import_folder': '',
@@ -26,6 +24,7 @@ class ConfigManager:
         'window_x': 100,
         'window_y': 100,
         'theme': 'light',
+        'chart_palette': 'classic',
         'chart_color_scheme': 'default'
     }
 
@@ -45,7 +44,6 @@ class ConfigManager:
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     saved_config = json.load(f)
-                # Объединяем с defaults (чтобы новые поля появлялись автоматически)
                 config = self.DEFAULTS.copy()
                 config.update(saved_config)
                 return config

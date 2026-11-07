@@ -1,11 +1,12 @@
 """
-Панель экспорта данных
+Панель экспорта данных (Excel, PDF, PNG)
 """
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import os
+from reports.pdf_exporter import PDFExporter
 
 
 class ExportPanel:
@@ -55,14 +56,14 @@ class ExportPanel:
         # Кнопка 2: Экспорт сводного отчёта
         export_report_frame = ttk.LabelFrame(
             buttons_frame,
-            text="📑 Сводный отчёт",
+            text="📑 Сводный отчёт (Excel)",
             padding=15
         )
         export_report_frame.pack(fill='x', pady=10)
 
         ttk.Label(
             export_report_frame,
-            text="Сохранить сводные таблицы (по продуктам, регионам, месяцам) в Excel с несколькими листами",
+            text="Сохранить сводные таблицы в Excel с несколькими листами",
             font=('Arial', 10),
             wraplength=500
         ).pack(anchor='w', pady=(0, 10))
@@ -74,17 +75,39 @@ class ExportPanel:
         )
         export_report_btn.pack(anchor='w')
 
-        # Кнопка 3: Экспорт графиков
+        # Кнопка 3: Экспорт в PDF (НОВОЕ)
+        export_pdf_frame = ttk.LabelFrame(
+            buttons_frame,
+            text="📄 PDF-отчёт для руководства",
+            padding=15
+        )
+        export_pdf_frame.pack(fill='x', pady=10)
+
+        ttk.Label(
+            export_pdf_frame,
+            text="Создать красивый PDF-файл с KPI, графиками и сводными таблицами",
+            font=('Arial', 10),
+            wraplength=500
+        ).pack(anchor='w', pady=(0, 10))
+
+        export_pdf_btn = ttk.Button(
+            export_pdf_frame,
+            text="📄 Экспортировать dashboard_report.pdf",
+            command=self._export_pdf
+        )
+        export_pdf_btn.pack(anchor='w')
+
+        # Кнопка 4: Экспорт графиков
         export_charts_frame = ttk.LabelFrame(
             buttons_frame,
-            text="🖼️ Графики",
+            text="🖼️ Графики (PNG)",
             padding=15
         )
         export_charts_frame.pack(fill='x', pady=10)
 
         ttk.Label(
             export_charts_frame,
-            text="Сохранить все три графика в PNG-файлы",
+            text="Сохранить все три графика в отдельные PNG-файлы",
             font=('Arial', 10)
         ).pack(anchor='w', pady=(0, 10))
 
@@ -137,14 +160,10 @@ class ExportPanel:
                     engine='openpyxl'
                 )
 
-                # Сохраняем папку последнего экспорта
                 last_folder = os.path.dirname(filepath)
                 self.main_window.config.set_last_export_folder(last_folder)
 
-                messagebox.showinfo(
-                    "Успех",
-                    f"Объединённые данные сохранены:\n{filepath}"
-                )
+                messagebox.showinfo("Успех", f"Данные сохранены:\n{filepath}")
                 self.main_window.set_status(f"✅ Экспортировано: {filepath}")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
@@ -169,46 +188,64 @@ class ExportPanel:
                 with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
                     summaries = self.main_window.summaries
 
-                    # Лист 1: По продуктам
-                    summaries['by_product'].to_excel(
-                        writer,
-                        sheet_name='По продуктам',
-                        index=False
-                    )
+                    summaries['by_product'].to_excel(writer, sheet_name='По продуктам', index=False)
+                    summaries['by_region'].to_excel(writer, sheet_name='По регионам', index=False)
+                    summaries['by_manager'].to_excel(writer, sheet_name='По менеджерам', index=False)
+                    summaries['by_customer'].to_excel(writer, sheet_name='По клиентам', index=False)
+                    summaries['by_month'].to_excel(writer, sheet_name='По месяцам', index=False)
 
-                    # Лист 2: По регионам
-                    summaries['by_region'].to_excel(
-                        writer,
-                        sheet_name='По регионам',
-                        index=False
-                    )
-
-                    # Лист 3: По месяцам
-                    summaries['by_month'].to_excel(
-                        writer,
-                        sheet_name='По месяцам',
-                        index=False
-                    )
-
-                    # Лист 4: KPI
                     kpi_df = pd.DataFrame([self.main_window.kpi])
-                    kpi_df.to_excel(
-                        writer,
-                        sheet_name='KPI',
-                        index=False
-                    )
+                    kpi_df.to_excel(writer, sheet_name='KPI', index=False)
 
-                # Сохраняем папку последнего экспорта
                 last_folder = os.path.dirname(filepath)
                 self.main_window.config.set_last_export_folder(last_folder)
 
                 messagebox.showinfo(
                     "Успех",
-                    f"Сводный отчёт сохранён:\n{filepath}\n\nЛисты: По продуктам, По регионам, По месяцам, KPI"
+                    f"Сводный отчёт сохранён:\n{filepath}\n\nЛисты: Продукты, Регионы, Менеджеры, Клиенты, Месяцы, KPI"
                 )
                 self.main_window.set_status(f"✅ Экспортировано: {filepath}")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{e}")
+
+    def _export_pdf(self):
+        """Экспорт дашборда в PDF"""
+        if not self._check_data_available():
+            return
+
+        initial_dir = self.main_window.config.get('last_export_folder', '')
+
+        filepath = filedialog.asksaveasfilename(
+            title="Сохранить PDF-отчёт",
+            defaultextension=".pdf",
+            filetypes=[("PDF файлы", "*.pdf")],
+            initialfile="dashboard_report.pdf",
+            initialdir=initial_dir if initial_dir else ''
+        )
+
+        if filepath:
+            try:
+                self.main_window.set_status("⏳ Генерация PDF-отчёта (это может занять пару секунд)...")
+                self.parent.update()  # Обновляем интерфейс, чтобы показать статус
+
+                PDFExporter.export_dashboard(
+                    summaries=self.main_window.summaries,
+                    kpi=self.main_window.kpi,
+                    output_path=filepath,
+                    title='Отчёт по продажам'
+                )
+
+                last_folder = os.path.dirname(filepath)
+                self.main_window.config.set_last_export_folder(last_folder)
+
+                messagebox.showinfo(
+                    "Успех",
+                    f"PDF-отчёт успешно создан и сохранён:\n{filepath}"
+                )
+                self.main_window.set_status(f"✅ PDF экспортирован: {filepath}")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось создать PDF:\n{e}")
+                self.main_window.set_status("❌ Ошибка экспорта PDF")
 
     def _export_charts(self):
         """Экспорт графиков в PNG"""
@@ -216,7 +253,8 @@ class ExportPanel:
             return
 
         folder = filedialog.askdirectory(
-            title="Выберите папку для сохранения графиков"
+            title="Выберите папку для сохранения графиков",
+            initialdir=self.main_window.config.get('last_export_folder', '')
         )
 
         if folder:
@@ -225,32 +263,25 @@ class ExportPanel:
 
                 summaries = self.main_window.summaries
 
-                # График 1: По продуктам
                 fig1 = ChartBuilder.create_bar_chart(
-                    summaries['by_product'],
-                    'product', 'revenue',
+                    summaries['by_product'], 'product', 'revenue',
                     'Выручка по продуктам', 'Продукт', 'Выручка (₽)'
                 )
-                path1 = os.path.join(folder, 'chart_products.png')
-                ChartBuilder.save_figure(fig1, path1)
+                ChartBuilder.save_figure(fig1, os.path.join(folder, 'chart_products.png'))
 
-                # График 2: По регионам
                 fig2 = ChartBuilder.create_bar_chart(
-                    summaries['by_region'],
-                    'region', 'revenue',
+                    summaries['by_region'], 'region', 'revenue',
                     'Выручка по регионам', 'Регион', 'Выручка (₽)'
                 )
-                path2 = os.path.join(folder, 'chart_regions.png')
-                ChartBuilder.save_figure(fig2, path2)
+                ChartBuilder.save_figure(fig2, os.path.join(folder, 'chart_regions.png'))
 
-                # График 3: По месяцам
                 fig3 = ChartBuilder.create_line_chart(
-                    summaries['by_month'],
-                    'period', 'revenue',
+                    summaries['by_month'], 'period', 'revenue',
                     'Динамика выручки по месяцам', 'Период', 'Выручка (₽)'
                 )
-                path3 = os.path.join(folder, 'chart_months.png')
-                ChartBuilder.save_figure(fig3, path3)
+                ChartBuilder.save_figure(fig3, os.path.join(folder, 'chart_months.png'))
+
+                self.main_window.config.set_last_export_folder(folder)
 
                 messagebox.showinfo(
                     "Успех",

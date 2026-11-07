@@ -12,93 +12,115 @@ class ColumnMappingDialog:
     """
 
     REQUIRED_ROLES = {
-        'date': '📅 Дата продажи (date)',
-        'region': '🌍 Регион / Город (region)',
-        'product': '📦 Продукт / Товар (product)',
-        'units_sold': '🔢 Количество (units_sold)',
-        'unit_price': '💰 Цена за единицу (unit_price)'
+        'date': '📅 Дата продажи',
+        'region': '🌍 Регион / Город',
+        'product': '📦 Продукт / Товар',
+        'units_sold': '🔢 Количество',
+        'unit_price': '💰 Цена за единицу'
+    }
+
+    OPTIONAL_ROLES = {
+        'cost_price': '💵 Себестоимость',
+        'profit': '📈 Прибыль',
+        'customer': '👤 Клиент / Покупатель',
+        'manager': '👔 Менеджер / Продавец'
     }
 
     def __init__(self, parent, available_columns: list, current_roles: dict):
-        """
-        Args:
-            parent: Родительское окно (MainWindow)
-            available_columns: Список реальных названий столбцов из файла
-            current_roles: Словарь {роль: название_столбца}, который предложил детектор
-        """
         self.parent = parent
         self.available_columns = ["— Не выбрано —"] + sorted(available_columns)
         self.current_roles = current_roles.copy()
         self.result_roles = None
 
-        # Создаём диалоговое окно (Toplevel)
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Настройка соответствия столбцов")
-        self.dialog.geometry("500x450")
+        self.dialog.geometry("600x700")
         self.dialog.resizable(False, False)
-        self.dialog.transient(parent)  # Привязка к родителю
-        self.dialog.grab_set()  # Делаем окно модальным (блокирует основное)
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
 
-        # Центрирование окна
+        # Центрирование
         self.dialog.update_idletasks()
-        x = parent.winfo_rootx() + (parent.winfo_width() // 2) - 250
-        y = parent.winfo_rooty() + (parent.winfo_height() // 2) - 225
-        self.dialog.geometry(f"+{x}+{y}")
+        x = parent.winfo_rootx() + (parent.winfo_width() // 2) - 300
+        y = parent.winfo_rooty() + (parent.winfo_height() // 2) - 350
+        self.dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
 
         self._create_widgets()
-
-        # Обработка закрытия окна через крестик
         self.dialog.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
     def _create_widgets(self):
         """Создание виджетов диалога"""
-        # Заголовок и инструкция
-        header_frame = ttk.Frame(self.dialog)
-        header_frame.pack(fill='x', padx=20, pady=15)
+        # Главный контейнер
+        main_frame = ttk.Frame(self.dialog)
+        main_frame.pack(fill='both', expand=True, padx=15, pady=10)
+
+        # Заголовок
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill='x', pady=(0, 10))
 
         ttk.Label(
             header_frame,
-            text="Не все столбцы определены автоматически",
+            text="⚠️ Не все обязательные столбцы определены",
             font=('Arial', 12, 'bold'),
             foreground='#C44E52'
         ).pack(anchor='w')
 
         ttk.Label(
             header_frame,
-            text="Пожалуйста, укажите, какой столбец из вашего файла соответствует каждому параметру:",
-            font=('Arial', 10),
-            wraplength=450
+            text="Выберите соответствие для обязательных полей. Опциональные поля можно оставить пустыми.",
+            font=('Arial', 9),
+            wraplength=550
         ).pack(anchor='w', pady=(5, 0))
 
-        # Форма с выпадающими списками
-        form_frame = ttk.Frame(self.dialog)
-        form_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        # Разделитель
+        ttk.Separator(main_frame, orient='horizontal').pack(fill='x', pady=5)
+
+        # Прокручиваемая область для формы
+        canvas_frame = ttk.Frame(main_frame)
+        canvas_frame.pack(fill='both', expand=True)
+
+        canvas = tk.Canvas(canvas_frame, highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        self.scrollable_frame = ttk.Frame(canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=canvas.winfo_reqwidth())
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Привязка колёсика мыши
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         self.comboboxes = {}
 
-        for i, (role, label_text) in enumerate(self.REQUIRED_ROLES.items()):
-            row_frame = ttk.Frame(form_frame)
-            row_frame.pack(fill='x', pady=5)
+        # Обязательные роли
+        ttk.Label(
+            self.scrollable_frame,
+            text="ОБЯЗАТЕЛЬНЫЕ ПОЛЯ:",
+            font=('Arial', 10, 'bold')
+        ).pack(anchor='w', pady=(10, 5))
 
-            # Метка роли
-            ttk.Label(
-                row_frame,
-                text=label_text,
-                width=30,
-                font=('Arial', 10)
-            ).pack(side='left')
+        for role, label_text in self.REQUIRED_ROLES.items():
+            row_frame = ttk.Frame(self.scrollable_frame)
+            row_frame.pack(fill='x', pady=3)
 
-            # Выпадающий список
+            ttk.Label(row_frame, text=label_text, width=30, font=('Arial', 10)).pack(side='left')
+
             cb = ttk.Combobox(
                 row_frame,
                 values=self.available_columns,
                 state='readonly',
-                width=35,
+                width=30,
                 font=('Arial', 10)
             )
             cb.pack(side='left', padx=10)
 
-            # Предвыбор значения, которое предложил детектор
             detected_col = self.current_roles.get(role)
             if detected_col and detected_col in self.available_columns:
                 cb.set(detected_col)
@@ -107,26 +129,53 @@ class ColumnMappingDialog:
 
             self.comboboxes[role] = cb
 
-        # Кнопки управления
-        btn_frame = ttk.Frame(self.dialog)
-        btn_frame.pack(fill='x', padx=20, pady=15)
+        # Опциональные роли
+        ttk.Label(
+            self.scrollable_frame,
+            text="ОПЦИОНАЛЬНЫЕ ПОЛЯ (можно оставить пустыми):",
+            font=('Arial', 10, 'bold')
+        ).pack(anchor='w', pady=(15, 5))
+
+        for role, label_text in self.OPTIONAL_ROLES.items():
+            row_frame = ttk.Frame(self.scrollable_frame)
+            row_frame.pack(fill='x', pady=3)
+
+            ttk.Label(row_frame, text=label_text, width=30, font=('Arial', 10)).pack(side='left')
+
+            cb = ttk.Combobox(
+                row_frame,
+                values=self.available_columns,
+                state='readonly',
+                width=30,
+                font=('Arial', 10)
+            )
+            cb.pack(side='left', padx=10)
+
+            detected_col = self.current_roles.get(role)
+            if detected_col and detected_col in self.available_columns:
+                cb.set(detected_col)
+            else:
+                cb.set("— Не выбрано —")
+
+            self.comboboxes[role] = cb
+
+        # Кнопки управления (вне прокручиваемой области, всегда видны)
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=(15, 5))
 
         ttk.Button(
             btn_frame,
             text="❌ Отмена",
             command=self._on_cancel,
             width=15
-        ).pack(side='left')
+        ).pack(side='left', padx=5)
 
         ttk.Button(
             btn_frame,
             text="✅ Применить",
             command=self._on_apply,
             width=15
-        ).pack(side='right')
-
-        # Фокус на первую кнопку
-        btn_frame.focus_set()
+        ).pack(side='right', padx=5)
 
     def _on_apply(self):
         """Сбор данных при нажатии 'Применить'"""
@@ -144,9 +193,6 @@ class ColumnMappingDialog:
         self.dialog.destroy()
 
     def show(self) -> dict:
-        """
-        Показывает диалог и возвращает обновлённый словарь ролей.
-        Возвращает None, если пользователь нажал 'Отмена'.
-        """
+        """Показывает диалог и возвращает обновлённый словарь ролей"""
         self.parent.wait_window(self.dialog)
         return self.result_roles

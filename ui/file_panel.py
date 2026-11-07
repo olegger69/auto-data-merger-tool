@@ -1,27 +1,33 @@
 """
-Панель импорта файлов с поддержкой маппинга столбцов
+Панель импорта файлов с поддержкой маппинга, предпросмотра, Google Sheets и SQL
 """
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
 import os
+import pandas as pd
+
 from core.merger import DataMerger
 from core.loader import DataLoader
 from core.validator import DataValidator
 from reports.kpi import KPIReporter
 from reports.summaries import SummaryReporter
 from ui.column_mapping_dialog import ColumnMappingDialog
+from ui.google_sheets_dialog import GoogleSheetsDialog
+from ui.sql_dialog import SQLDialog
 
 
 class FilePanel:
-    """Панель для выбора и импорта файлов"""
+    """Панель для выбора и импорта данных из различных источников"""
+
+    EXPORT_FILE_HINTS = ['merged_output', 'summary_report', 'dashboard_report']
 
     def __init__(self, parent, main_window):
         self.parent = parent
         self.main_window = main_window
         self.merger = DataMerger()
-        self.selected_files = []
+        self.selected_files = []  # Может содержать строки (пути) или dict (dataframe)
 
         self.frame = ttk.Frame(parent)
         self._create_widgets()
@@ -34,25 +40,37 @@ class FilePanel:
         add_btn = ttk.Button(control_frame, text="➕ Добавить файлы", command=self._add_files)
         add_btn.pack(side='left', padx=5)
 
+        sheets_btn = ttk.Button(control_frame, text="📊 Google Sheets", command=self._import_from_google_sheets)
+        sheets_btn.pack(side='left', padx=5)
+
+        sql_btn = ttk.Button(control_frame, text="🗄️ SQL База данных", command=self._import_from_sql)
+        sql_btn.pack(side='left', padx=5)
+
         clear_btn = ttk.Button(control_frame, text="🗑️ Очистить список", command=self._clear_files)
         clear_btn.pack(side='left', padx=5)
 
-        merge_btn = ttk.Button(control_frame, text="🔗 Объединить файлы", command=self._merge_files)
+        merge_btn = ttk.Button(control_frame, text="🔗 Объединить данные", command=self._merge_files)
         merge_btn.pack(side='right', padx=5)
 
-        list_frame = ttk.LabelFrame(self.frame, text="Выбранные файлы", padding=10)
-        list_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        main_container = ttk.PanedWindow(self.frame, orient='horizontal')
+        main_container.pack(fill='both', expand=True, padx=10, pady=5)
+
+        left_frame = ttk.Frame(main_container)
+        main_container.add(left_frame, weight=1)
+
+        list_frame = ttk.LabelFrame(left_frame, text="Источники данных", padding=10)
+        list_frame.pack(fill='both', expand=True)
 
         columns = ('filename', 'rows', 'status')
         self.file_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=10)
 
-        self.file_tree.heading('filename', text='Имя файла')
+        self.file_tree.heading('filename', text='Источник / Имя файла')
         self.file_tree.heading('rows', text='Строк')
         self.file_tree.heading('status', text='Статус')
 
-        self.file_tree.column('filename', width=400, minwidth=200)
-        self.file_tree.column('rows', width=100, minwidth=80, anchor='center')
-        self.file_tree.column('status', width=150, minwidth=100)
+        self.file_tree.column('filename', width=300, minwidth=200)
+        self.file_tree.column('rows', width=80, minwidth=60, anchor='center')
+        self.file_tree.column('status', width=120, minwidth=80)
 
         scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.file_tree.yview)
         self.file_tree.configure(yscrollcommand=scrollbar.set)
@@ -63,119 +81,242 @@ class FilePanel:
         remove_btn = ttk.Button(list_frame, text="Удалить выбранный", command=self._remove_selected)
         remove_btn.pack(pady=5)
 
+        right_frame = ttk.Frame(main_container)
+        main_container.add(right_frame, weight=1)
+
+        preview_frame = ttk.LabelFrame(right_frame, text="👁️ Предпросмотр данных", padding=10)
+        preview_frame.pack(fill='both', expand=True)
+
+        self.preview_container = ttk.Frame(preview_frame)
+        self.preview_container.pack(fill='both', expand=True)
+
+        self.preview_placeholder = ttk.Label(
+            self.preview_container,
+            text="Выберите источник в списке слева,\nчтобы увидеть предпросмотр данных",
+            font=('Arial', 11),
+            foreground='gray',
+            justify='center'
+        )
+        self.preview_placeholder.pack(expand=True)
+
+        self.preview_tree = None
+
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_bar = ttk.Progressbar(self.frame, variable=self.progress_var, maximum=100, mode='indeterminate')
         self.progress_bar.pack(fill='x', padx=10, pady=5)
         self.progress_bar.pack_forget()
 
-    def _add_files(self):
-        """Открытие диалога выбора файлов"""
-        initial_dir = self.main_window.config.get('last_import_folder', '')
+        self.file_tree.bind('<<TreeviewSelect>>', self._on_file_select)
 
+    def _is_export_file(self, file_path: str) -> bool:
+        filename = os.path.basename(file_path).lower()
+        return any(hint in filename for hint in self.EXPORT_FILE_HINTS)
+
+    def _on_file_select(self, event):
+        selected = self.file_tree.selection()
+        if not selected:
+            self._clear_preview()
+            return
+
+        item = self.file_tree.item(selected[0])
+        source = item['values'][0]
+
+        self._show_loading_preview()
+        thread = threading.Thread(target=self._load_preview, args=(source,), daemon=True)
+        thread.start()
+
+    def _show_loading_preview(self):
+        self._clear_preview()
+        ttk.Label(self.preview_container, text="Загрузка предпросмотра...", font=('Arial', 10), foreground='gray').pack(
+            expand=True)
+
+    def _load_preview(self, source):
+        try:
+            df = None
+            for item in self.selected_files:
+                if isinstance(item, dict) and item.get('name') == source:
+                    df = item['data']
+                    break
+                elif isinstance(item, str) and os.path.basename(item) == source:
+                    ext = os.path.splitext(item)[1].lower()
+                    if ext == '.csv':
+                        df = pd.read_csv(item, nrows=10)
+                    elif ext in ['.xlsx', '.xls']:
+                        df = pd.read_excel(item, nrows=10)
+                    break
+
+            if df is not None:
+                self.frame.after(0, self._display_preview, df, source)
+            else:
+                self.frame.after(0, self._show_preview_error, "Данные не найдены")
+        except Exception as e:
+            self.frame.after(0, self._show_preview_error, str(e))
+
+    def _display_preview(self, df: pd.DataFrame, source: str):
+        self._clear_preview()
+        if df.empty:
+            ttk.Label(self.preview_container, text="Данные пустые", font=('Arial', 10), foreground='gray').pack(
+                expand=True)
+            return
+
+        preview_frame = ttk.Frame(self.preview_container)
+        preview_frame.pack(fill='both', expand=True)
+
+        cols = list(df.columns)
+        self.preview_tree = ttk.Treeview(preview_frame, columns=cols, show='headings', height=min(len(df), 10))
+
+        for col in cols:
+            self.preview_tree.heading(col, text=str(col))
+            self.preview_tree.column(col, width=120, minwidth=80)
+
+        for _, row in df.iterrows():
+            values = [str(val) if pd.notna(val) else '' for val in row]
+            self.preview_tree.insert('', 'end', values=values)
+
+        y_scrollbar = ttk.Scrollbar(preview_frame, orient='vertical', command=self.preview_tree.yview)
+        x_scrollbar = ttk.Scrollbar(preview_frame, orient='horizontal', command=self.preview_tree.xview)
+        self.preview_tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
+
+        self.preview_tree.grid(row=0, column=0, sticky='nsew')
+        y_scrollbar.grid(row=0, column=1, sticky='ns')
+        x_scrollbar.grid(row=1, column=0, sticky='ew')
+
+        preview_frame.grid_rowconfigure(0, weight=1)
+        preview_frame.grid_columnconfigure(0, weight=1)
+
+        ttk.Label(self.preview_container, text=f"📄 {source} | Показано строк: {len(df)}", font=('Arial', 9),
+                  foreground='gray').pack(pady=(5, 0))
+
+    def _show_preview_error(self, error_message):
+        self._clear_preview()
+        ttk.Label(self.preview_container, text=f"❌ Ошибка:\n{error_message}", font=('Arial', 10), foreground='red',
+                  justify='center').pack(expand=True)
+
+    def _clear_preview(self):
+        for widget in self.preview_container.winfo_children():
+            widget.destroy()
+        self.preview_tree = None
+
+    def _add_files(self):
+        initial_dir = self.main_window.config.get('last_import_folder', '')
         files = filedialog.askopenfilenames(
             title="Выберите файлы для импорта",
-            filetypes=[
-                ("Excel файлы", "*.xlsx *.xls"),
-                ("CSV файлы", "*.csv"),
-                ("Все поддерживаемые", "*.xlsx *.xls *.csv"),
-                ("Все файлы", "*.*")
-            ],
+            filetypes=[("Excel файлы", "*.xlsx *.xls"), ("CSV файлы", "*.csv"), ("Все файлы", "*.*")],
             initialdir=initial_dir if initial_dir else ''
         )
 
         if files:
-            last_folder = os.path.dirname(files[0])
-            self.main_window.config.set_last_import_folder(last_folder)
-
+            self.main_window.config.set_last_import_folder(os.path.dirname(files[0]))
+            added = 0
             for file_path in files:
-                if file_path not in self.selected_files:
+                if self._is_export_file(file_path):
+                    messagebox.showwarning("Внимание",
+                                           f"Файл '{os.path.basename(file_path)}' похож на экспорт приложения и пропущен.")
+                    continue
+                if file_path not in [item for item in self.selected_files if isinstance(item, str)]:
                     self.selected_files.append(file_path)
-                    self.file_tree.insert('', 'end', values=(file_path, '—', 'Ожидает'))
+                    self.file_tree.insert('', 'end', values=(os.path.basename(file_path), '—', 'Ожидает'))
+                    added += 1
+            if added > 0:
+                self.main_window.set_status(f"Добавлено файлов: {added}")
 
-            self.main_window.set_status(f"Добавлено файлов: {len(self.selected_files)}")
+    def _import_from_google_sheets(self):
+        dialog = GoogleSheetsDialog(self.main_window.root)
+        df, error = dialog.show()
+        if df is not None and not df.empty:
+            name = f"Google_Sheets_{len([i for i in self.selected_files if isinstance(i, dict)]) + 1}"
+            self.selected_files.append({'type': 'dataframe', 'name': name, 'data': df})
+            self.file_tree.insert('', 'end', values=(name, len(df), '✅ Готов (Sheets)'))
+            self.main_window.set_status(f"✅ Импортировано из Google Sheets: {len(df)} строк")
+        elif error:
+            messagebox.showerror("Ошибка импорта", error)
+
+    def _import_from_sql(self):
+        dialog = SQLDialog(self.main_window.root)
+        df, error = dialog.show()
+        if df is not None and not df.empty:
+            name = f"SQL_Query_{len([i for i in self.selected_files if isinstance(i, dict)]) + 1}"
+            self.selected_files.append({'type': 'dataframe', 'name': name, 'data': df})
+            self.file_tree.insert('', 'end', values=(name, len(df), '✅ Готов (SQL)'))
+            self.main_window.set_status(f"✅ Импортировано из SQL: {len(df)} строк")
+        elif error:
+            messagebox.showerror("Ошибка импорта", error)
 
     def _clear_files(self):
         self.selected_files = []
         for item in self.file_tree.get_children():
             self.file_tree.delete(item)
-        self.main_window.set_status("Список файлов очищен")
+        self._clear_preview()
+        self.main_window.set_status("Список источников очищен")
 
     def _remove_selected(self):
         selected = self.file_tree.selection()
         if selected:
             item = self.file_tree.item(selected[0])
-            file_path = item['values'][0]
-            self.selected_files.remove(file_path)
+            source = item['values'][0]
+            self.selected_files = [i for i in self.selected_files if not (
+                        isinstance(i, dict) and i.get('name') == source or isinstance(i, str) and os.path.basename(
+                    i) == source)]
             self.file_tree.delete(selected[0])
-            self.main_window.set_status(f"Удалён файл: {file_path}")
+            self._clear_preview()
+            self.main_window.set_status(f"Удалён источник: {source}")
 
     def _merge_files(self):
-        """Проверка файлов, маппинг и запуск объединения"""
         if not self.selected_files:
-            messagebox.showwarning("Внимание", "Сначала добавьте хотя бы один файл!")
+            messagebox.showwarning("Внимание", "Сначала добавьте хотя бы один источник данных!")
             return
 
-        self.main_window.set_status("Анализ структуры файлов...")
+        self.main_window.set_status("Анализ и подготовка данных...")
         prepared_dfs = []
         errors = []
 
-        # Этап 1: Проверка и маппинг (в главном потоке, это быстро)
-        for file_path in self.selected_files:
+        for item in self.selected_files:
             try:
-                # Загружаем и определяем роли
-                df, roles = self.merger.loader.load_and_detect(file_path)
+                if isinstance(item, dict) and item.get('type') == 'dataframe':
+                    df = item['data']
+                    source_name = item['name']
+                    roles = {}
+                else:
+                    file_path = item
+                    source_name = os.path.basename(file_path)
+                    df, roles = self.merger.loader.load_and_detect(file_path)
+
                 is_complete, missing = DataLoader.check_roles_complete(roles)
 
                 if not is_complete:
-                    # Открываем диалог маппинга
-                    dialog = ColumnMappingDialog(
-                        self.main_window.root,
-                        df.columns.tolist(),
-                        roles
-                    )
+                    dialog = ColumnMappingDialog(self.main_window.root, df.columns.tolist(), roles)
                     new_roles = dialog.show()
-
                     if new_roles is None:
-                        errors.append(f"Файл '{os.path.basename(file_path)}': обработка отменена.")
+                        errors.append(f"'{source_name}': обработка отменена.")
                         continue
-
-                    # Проверяем, выбрал ли пользователь все обязательные поля
                     is_now_complete, still_missing = DataLoader.check_roles_complete(new_roles)
                     if not is_now_complete:
-                        errors.append(f"Файл '{os.path.basename(file_path)}': не выбраны столбцы {still_missing}.")
+                        errors.append(f"'{source_name}': не выбраны обязательные столбцы {still_missing}.")
                         continue
-
-                    # Применяем маппинг с выбранными ролями
                     df = DataLoader.apply_mapping(df, new_roles)
-                else:
-                    # Все роли определены автоматически — всё равно применяем маппинг
-                    # для стандартизации имён столбцов
+                elif isinstance(item, str):
                     df = DataLoader.apply_mapping(df, roles)
 
                 prepared_dfs.append(df)
 
-                # Обновляем статус в дереве
-                for item in self.file_tree.get_children():
-                    if self.file_tree.item(item)['values'][0] == file_path:
-                        self.file_tree.item(item, values=(file_path, len(df), '✅ Готов'))
+                for tree_item in self.file_tree.get_children():
+                    if self.file_tree.item(tree_item)['values'][0] == source_name:
+                        self.file_tree.item(tree_item, values=(source_name, len(df), '✅ Готов'))
 
             except Exception as e:
-                errors.append(f"Файл '{os.path.basename(file_path)}': {str(e)}")
-                for item in self.file_tree.get_children():
-                    if self.file_tree.item(item)['values'][0] == file_path:
-                        self.file_tree.item(item, values=(file_path, '—', '❌ Ошибка'))
+                errors.append(f"'{source_name}': {str(e)}")
+                for tree_item in self.file_tree.get_children():
+                    if self.file_tree.item(tree_item)['values'][0] == source_name:
+                        self.file_tree.item(tree_item, values=(source_name, '—', '❌ Ошибка'))
 
         if not prepared_dfs:
-            error_text = "\n".join(errors) if errors else "Не удалось подготовить ни один файл."
-            messagebox.showerror("Ошибка", error_text)
+            messagebox.showerror("Ошибка", "\n".join(errors) if errors else "Не удалось подготовить данные.")
             self.main_window.set_status("❌ Объединение прервано")
             return
 
         if errors:
-            error_text = "\n".join(errors)
-            messagebox.showwarning("Предупреждения", f"Некоторые файлы были пропущены:\n\n{error_text}")
+            messagebox.showwarning("Предупреждения", "Некоторые источники пропущены:\n\n" + "\n".join(errors))
 
-        # Этап 2: Фоновая обработка (объединение и расчеты)
         self.progress_bar.pack(fill='x', padx=10, pady=5)
         self.progress_bar.start(10)
 
@@ -183,36 +324,24 @@ class FilePanel:
         thread.start()
 
     def _merge_worker_bg(self, prepared_dfs):
-        """Фоновая задача объединения и расчетов"""
         try:
             self.main_window.set_status("Объединение и расчет данных...")
-
-            # 1. Объединение
             merged_df = self.merger.merge_dataframes(prepared_dfs)
-
-            # 2. Валидация и очистка (приведение типов, расчет revenue)
             clean_df = DataValidator.process(merged_df)
-
-            # 3. Расчет сводок и KPI
             summaries = SummaryReporter.generate_all(clean_df)
             kpi = KPIReporter.calculate(clean_df)
-
-            # Возвращаемся в главный поток
             self.frame.after(0, self._on_merge_complete, clean_df, summaries, kpi)
-
         except Exception as e:
-            self.frame.after(0, self._on_merge_error, str(e))
+            import traceback
+            self.frame.after(0, self._on_merge_error, f"{str(e)}\n\n{traceback.format_exc()}")
 
     def _on_merge_complete(self, merged_df, summaries, kpi):
-        """Обработка успешного завершения"""
         self.progress_bar.stop()
         self.progress_bar.pack_forget()
-
         self.main_window.on_data_merged(merged_df, summaries, kpi)
 
     def _on_merge_error(self, error_message):
-        """Обработка ошибки"""
         self.progress_bar.stop()
         self.progress_bar.pack_forget()
-        messagebox.showerror("Ошибка", f"Не удалось объединить файлы:\n\n{error_message}")
+        messagebox.showerror("Ошибка при обработке данных", error_message)
         self.main_window.set_status("❌ Ошибка при объединении")
